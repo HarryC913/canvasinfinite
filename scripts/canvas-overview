@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""
+canvas-overview — toggle a full-display overview for the canvasinfinite plugin.
+
+Zooms each monitor OUT (via Hyprland's monitor scale — crisp compositor downscale,
+not a render hack) so every window on its active workspace fits on screen, then
+toggles back to the native scale. Pairs with the canvasinfinite plugin's canvas
+mode but works on any floating layout.
+
+Why a script: monitor scale only persists through Hyprland's keyword/config path,
+which a render-plugin can't reach in-process. Driving `hyprctl keyword monitor` from
+a small helper is the idiomatic, reliable way to do a view/monitor operation.
+
+Bind it to a key, e.g.:
+    bind = SUPER, Tab, exec, ~/.config/hypr/canvas-overview
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "canvasinfinite-overview.state")
+MARGIN = 0.92      # leave a small border around the fitted windows
+MIN_SCALE = 0.1    # never shrink past this
+
+
+def hjson(*args):
+    out = subprocess.run(["hyprctl", "-j", *args], capture_output=True, text=True).stdout
+    return json.loads(out)
+
+
+def set_monitor(line):
+    subprocess.run(["hyprctl", "keyword", "monitor", line], capture_output=True, text=True)
+
+
+def monitor_line(m, scale):
+    # resolution is the MODE size; rotation is applied separately via transform.
+    line = f'{m["name"]},{m["width"]}x{m["height"]}@{m["refreshRate"]:.5f},{m["x"]}x{m["y"]},{scale:g}'
+    if m.get("transform", 0):
+        line += f',transform,{m["transform"]}'
+    return line
+
+
+def logical_dims(m):
+    # logical orientation: 90/270 rotations swap width/height
+    if m.get("transform", 0) in (1, 3, 5, 7):
+        return float(m["height"]), float(m["width"])
+    return float(m["width"]), float(m["height"])
+
+
+def main():
+    # already in overview -> restore the saved monitor lines and exit
+    if os.path.exists(STATE):
+        for line in open(STATE):
+            line = line.strip()
+            if line:
+                set_monitor(line)
+        os.remove(STATE)
+        return
+
+    monitors = hjson("monitors")
+    clients = hjson("clients")
+    saved = []
+
+    for m in monitors:
+        wsid = m["activeWorkspace"]["id"]
+        wins = [c for c in clients
+                if c.get("mapped") and not c.get("hidden", False) and c["workspace"]["id"] == wsid]
+        if not wins:
+            continue
+
+        minx = min(c["at"][0] for c in wins)
+        miny = min(c["at"][1] for c in wins)
+        maxx = max(c["at"][0] + c["size"][0] for c in wins)
+        maxy = max(c["at"][1] + c["size"][1] for c in wins)
+        bw = max(1.0, maxx - minx)
+        bh = max(1.0, maxy - miny)
+
+        phys_w, phys_h = logical_dims(m)
+        # logical view size = phys/scale; to fit the bbox: scale <= phys/bbox
+        fit = min(phys_w / bw, phys_h / bh) * MARGIN
+        fit = max(MIN_SCALE, min(fit, m["scale"]))  # never magnify past native
+        if fit >= m["scale"]:
+            continue  # everything already fits
+
+        saved.append(monitor_line(m, m["scale"]))   # remember native line to restore
+        set_monitor(monitor_line(m, round(fit, 4)))
+
+    if saved:
+        with open(STATE, "w") as f:
+            f.write("\n".join(saved) + "\n")
+
+
+if __name__ == "__main__":
+    main()

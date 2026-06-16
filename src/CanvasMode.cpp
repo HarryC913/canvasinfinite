@@ -8,7 +8,6 @@
 
 #include <algorithm>
 
-static constexpr float ZOOM_MIN = 0.2F;
 
 // Compare workspaces by ID — the cursor monitor's active workspace and a window's
 // m_workspace are the same logical ws but not always the same shared_ptr.
@@ -98,10 +97,6 @@ void CCanvasMode::onWindowOpened(const PHLWINDOW& w) {
         g_layoutManager->changeFloatingMode(t);
 }
 
-void CCanvasMode::zoomBy(float factor) {
-    m_zoom = std::clamp(m_zoom * factor, ZOOM_MIN, 1.0F);
-}
-
 void CCanvasMode::panAllActive(const Vector2D& delta) {
     // Hot path (fires on every pointer motion during a grab-drag): one pass over the
     // window list, moving every window that lives on a canvas workspace. Avoids the
@@ -175,7 +170,4 @@ void CCanvasMode::leave(const PHLWORKSPACE& ws) {
 
     if (const auto MON = ws->m_monitor.lock())
         g_layoutManager->recalculateMonitor(MON);
-
-    if (m_canvasWorkspaces.empty())
-        m_zoom = 1.0F; // back to native when canvas fully off
 }

@@ -43,11 +43,6 @@ class CCanvasMode {
     // Pan every monitor's active canvas workspace by the same delta (both monitors move together).
     void panAllActive(const Vector2D& delta);
 
-    // Viewport zoom-OUT only (render-level, windows aren't resized). 1.0 = native,
-    // clamped to [ZOOM_MIN, 1.0] — never magnifies past native.
-    void  zoomBy(float factor);
-    float zoom() const { return m_zoom; }
-
     bool anyActive() const { return !m_canvasWorkspaces.empty(); }
 
   private:
@@ -71,8 +66,6 @@ class CCanvasMode {
     std::unordered_set<WORKSPACEID>                           m_canvasWorkspaces;
     std::unordered_map<WORKSPACEID, std::vector<SSavedWin>>   m_saved;     // tiled-restore data, erased on leave()
     std::unordered_map<WORKSPACEID, std::vector<SCanvasGeom>> m_canvasGeom; // remembered canvas layout, persists
-
-    float m_zoom = 1.0F; // 1.0 = native; < 1 = zoomed out
 };
 
 inline UP<CCanvasMode> g_canvas;

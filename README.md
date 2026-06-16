@@ -4,9 +4,9 @@ A Hyprland plugin that turns a workspace into a pannable **infinite 2D canvas**.
 on and your windows float on an endless plane you can grab and drag around — across both
 monitors at once — then toggle off to drop straight back into your normal tiling layout.
 
-> Status: **working & in active development.** Toggle, grab-pan, multi-monitor, and layout
-> persistence are solid. Zoom-out is experimental and currently disabled (see
-> [FINDINGS.md](FINDINGS.md)). Built and tested against **Hyprland 0.55.x**.
+> Status: **working & in active development.** Toggle, grab-pan, multi-monitor, layout
+> persistence, and full-display overview (via a companion script) all work. Built and tested
+> against **Hyprland 0.55.x**.
 
 ## Features
 
@@ -17,6 +17,9 @@ monitors at once — then toggle off to drop straight back into your normal tili
 - **Both monitors at once** — toggling/panning acts on every monitor's active workspace.
 - **Layout persistence** — windows remember where you left them on the canvas across
   off/on toggles. New windows join the canvas; closed windows are forgotten automatically.
+- **Full-display overview** — a companion script ([`scripts/canvas-overview`](scripts/canvas-overview))
+  zooms each monitor *out* via its scale (crisp compositor downscale, real resolution — not a
+  render hack) so every window fits, then toggles back to native. Per-monitor, rotation-aware.
 
 ## Requirements
 
@@ -56,6 +59,7 @@ hyprctl plugin load "$PWD/build/canvasinfinite.so"
 | Toggle canvas mode (all monitors) | `SUPER` + `` ` `` |
 | Pan the canvas | middle-mouse drag, or `Ctrl` + left-drag |
 | Pan (keyboard) | `SUPER`+`Ctrl`+`J` / `K` |
+| Toggle full-display overview | `SUPER`+`Ctrl`+`O` (runs `scripts/canvas-overview`) |
 
 ## How it works
 
@@ -67,8 +71,9 @@ are documented in [FINDINGS.md](FINDINGS.md).
 ## Status / roadmap
 
 - ✅ Toggle, grab-pan, multi-monitor, layout persistence
-- 🚧 Zoom-out overview — renders but isn't yet crash-safe from a plugin render hook; disabled
-  behind a compile flag (`ENABLE_ZOOM`) pending a safe approach. Details in FINDINGS.md.
+- ✅ Full-display overview via the companion script (monitor-scale zoom — see
+  [FINDINGS.md](FINDINGS.md) for why in-render scaling was a dead end)
+- 🔭 Ideas: zoom-to-fit framing/pan, smoother per-window placement, minimap
 
 ## License
 

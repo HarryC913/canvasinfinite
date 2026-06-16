@@ -18,3 +18,8 @@ bind = SUPER CTRL, K, canvas:pan, 0 -200
 bind = SUPER CTRL, J, canvas:pan, 0 200
 
 # In canvas mode you can also pan by holding MIDDLE-mouse (or CTRL + left) and dragging.
+
+# Full-display overview: zoom OUT (crisp monitor downscale) to fit all windows, toggle
+# back to native. This is the companion script scripts/canvas-overview (point the path
+# at wherever you cloned the repo). Pick a key that doesn't clash with your setup.
+bind = SUPER CTRL, O, exec, /home/YOURUSER/canvasinfinite/scripts/canvas-overview

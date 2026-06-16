@@ -10,21 +10,13 @@
 #include <hyprland/src/helpers/Monitor.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
-#include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/render/types.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
-#include <hyprland/src/helpers/time/Time.hpp>
-#include <hyprland/src/plugins/HookSystem.hpp>
 #include <hyprland/src/SharedDefs.hpp>
 
 // Kept alive for the life of the plugin; resetting them unregisters the hooks.
 static CHyprSignalListener g_buttonListener;
 static CHyprSignalListener g_moveListener;
-static CHyprSignalListener g_axisListener;
 static CHyprSignalListener g_openListener;
-static CHyprSignalListener g_renderListener;
-static CHyprSignalListener g_renderStageListener;
-static CFunctionHook*      g_renderWindowHook = nullptr;
 
 // Grab-to-pan state (middle-mouse or Ctrl+left drag).
 static bool     g_grabbing = false;
@@ -32,52 +24,6 @@ static Vector2D g_grabLast;
 
 static constexpr uint32_t BTN_LEFT_ID   = 0x110;
 static constexpr uint32_t BTN_MIDDLE_ID = 0x112;
-static constexpr float    ZOOM_STEP     = 0.9F; // per scroll tick (zoom out); reciprocal zooms in
-
-// Zoom (snapshot-based render scaling) CRASHES Hyprland: makeSnapshot() does nested
-// rendering inside the renderWindow hook and corrupts render state. Disabled until a
-// safe scaling path exists. Toggle/pan/both-monitors are unaffected and stable.
-static constexpr bool     ENABLE_ZOOM   = false;
-
-// Render-only zoom: hook renderWindow and, for canvas windows while zoomed out,
-// temporarily set the window's render geometry to a scaled value (around the
-// monitor centre), render, then restore. No real resize — input/layout untouched.
-using PRENDERWINDOW = void (*)(void*, PHLWINDOW, PHLMONITOR, const Time::steady_tp&, bool, Render::eRenderPassMode, bool, bool);
-
-static bool g_inSnapshot = false; // recursion guard: makeSnapshot re-enters renderWindow
-static bool g_snapValid  = false; // snapshots captured for this zoom session? (re-snap only on (re)entry)
-
-static void hkRenderWindow(void* thisptr, PHLWINDOW w, PHLMONITOR mon, const Time::steady_tp& time, bool b, Render::eRenderPassMode mode,
-                           bool ignorePos, bool standalone) {
-    const auto  orig = reinterpret_cast<PRENDERWINDOW>(g_renderWindowHook->m_original);
-    const float z    = g_canvas ? g_canvas->zoom() : 1.0F;
-
-    const bool scaling = !g_inSnapshot && z < 1.0F && w && mon && w->m_isMapped && w->m_realPosition && w->m_realSize &&
-        w->m_workspace && g_canvas->isCanvas(w->m_workspace);
-    if (!scaling) {
-        orig(thisptr, w, mon, time, b, mode, ignorePos, standalone);
-        return;
-    }
-
-    // Capture the live window into its snapshot ONCE per zoom session — doing this
-    // every frame (continuous nested rendering) crashes Hyprland. Recursion-guarded.
-    if (!g_snapValid) {
-        g_inSnapshot = true;
-        g_pHyprRenderer->makeSnapshot(w);
-        g_inSnapshot = false;
-    }
-
-    // Draw that snapshot texture at a scaled box (texture->box scales cleanly, no crop).
-    const Vector2D C  = mon->m_position + mon->m_size / 2.0;
-    Vector2D&      rp = w->m_realPosition->value();
-    Vector2D&      rs = w->m_realSize->value();
-    const Vector2D op = rp, os = rs;
-    rp = C + (op - C) * z;
-    rs = os * z;
-    g_pHyprRenderer->renderSnapshot(w);
-    rp = op;
-    rs = os;
-}
 
 static bool modHeld(uint32_t bit) {
     const auto KB = g_pSeatManager ? g_pSeatManager->m_keyboard.lock() : nullptr;
@@ -85,9 +31,6 @@ static bool modHeld(uint32_t bit) {
 }
 static bool ctrlHeld() {
     return modHeld(4u); // CTRL bit (same convention as binds)
-}
-static bool superHeld() {
-    return modHeld(64u); // SUPER/LOGO bit
 }
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -108,7 +51,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
     // --- the master switch -------------------------------------------------
     HyprlandAPI::addDispatcherV2(PHANDLE, "canvas:toggle", [](std::string) -> SDispatchResult {
         g_canvas->toggleAllMonitors();
-        g_snapValid = false; // fresh snapshots next zoom session
         HyprlandAPI::addNotification(PHANDLE, g_canvas->anyActive() ? "[canvas] ON" : "[canvas] OFF",
                                      CHyprColor{0.2F, 0.8F, 1.0F, 1.0F}, 1500);
         return {.success = true, .error = ""};
@@ -126,27 +68,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
         try {
             g_canvas->panAllActive(Vector2D{std::stod(arg.substr(0, SP)), std::stod(arg.substr(SP + 1))});
         } catch (...) { return {.success = false, .error = "canvas:pan: bad args"}; }
-        return {.success = true, .error = ""};
-    });
-
-    // --- zoom dispatcher (keyboard + headless testing) ---------------------
-    if (ENABLE_ZOOM)
-    HyprlandAPI::addDispatcherV2(PHANDLE, "canvas:zoom", [](std::string arg) -> SDispatchResult {
-        if (!g_canvas->anyActive())
-            return {.success = false, .error = "canvas: not in canvas mode"};
-        float f = ZOOM_STEP;
-        try {
-            f = std::stof(arg);
-        } catch (...) {}
-        g_canvas->zoomBy(f);
-        if (g_canvas->zoom() >= 1.0F)
-            g_snapValid = false;
-        for (const auto& mon : g_pCompositor->m_monitors) {
-            if (!mon)
-                continue;
-            g_pHyprRenderer->damageMonitor(mon);
-            g_pCompositor->scheduleFrameForMonitor(mon);
-        }
         return {.success = true, .error = ""};
     });
 
@@ -192,57 +113,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
             g_canvas->onWindowOpened(w);
     });
 
-    // --- SUPER + scroll = zoom OUT (canvas mode only) ----------------------
-    // Adjusts the canvas viewport zoom (render-only, applied in the render hook
-    // below). Capped at 1.0 — never magnifies past native. Only consumes
-    // SUPER+scroll in canvas mode; normal SUPER+scroll workspace cycling preserved.
-    if (ENABLE_ZOOM)
-    g_axisListener = Event::bus()->m_events.input.mouse.axis.listen(
-        [](IPointer::SAxisEvent e, Event::SCallbackInfo& info) {
-            if (!g_canvas->anyActive() || !superHeld())
-                return;
-            if (e.axis != WL_POINTER_AXIS_VERTICAL_SCROLL)
-                return;
-
-            g_canvas->zoomBy(e.delta > 0 ? ZOOM_STEP : 1.0F / ZOOM_STEP); // scroll down = out, up = in
-            if (g_canvas->zoom() >= 1.0F)
-                g_snapValid = false; // back to native -> refresh snapshots next zoom-out
-            for (const auto& mon : g_pCompositor->m_monitors) {
-                if (!mon)
-                    continue;
-                g_pHyprRenderer->damageMonitor(mon);
-                g_pCompositor->scheduleFrameForMonitor(mon);
-            }
-            info.cancelled = true; // don't cycle workspaces
-        });
-
-    // --- render hook: scale canvas windows down while zoomed out -----------
-    if (ENABLE_ZOOM) {
-    for (const auto& m : HyprlandAPI::findFunctionsByName(PHANDLE, "renderWindow")) {
-        if (m.demangled.find("IHyprRenderer::renderWindow") != std::string::npos) {
-            g_renderWindowHook = HyprlandAPI::createFunctionHook(PHANDLE, m.address, reinterpret_cast<void*>(&hkRenderWindow));
-            break;
-        }
-    }
-    if (g_renderWindowHook)
-        g_renderWindowHook->hook();
-    else
-        HyprlandAPI::addNotification(PHANDLE, "[canvas] zoom hook not found", CHyprColor{1.0F, 0.3F, 0.3F, 1.0F}, 6000);
-
-    // While zoomed out, fully redraw each monitor every frame (the scaled snapshots
-    // are drawn fresh each frame, so the un-shrunk areas must be redrawn -> no trails).
-    g_renderListener = Event::bus()->m_events.render.pre.listen([](PHLMONITOR mon) {
-        if (mon && g_canvas->anyActive() && g_canvas->zoom() < 1.0F)
-            g_pHyprRenderer->damageMonitor(mon);
-    });
-
-    // After a frame completes, mark snapshots captured so we stop re-snapshotting.
-    g_renderStageListener = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
-        if (stage == RENDER_POST && g_canvas->anyActive() && g_canvas->zoom() < 1.0F)
-            g_snapValid = true;
-    });
-    } // ENABLE_ZOOM
-
     HyprlandAPI::addNotification(PHANDLE, "[canvasinfinite] loaded — toggle: SUPER+grave, middle/Ctrl-drag to pan",
                                  CHyprColor{0.2F, 1.0F, 0.4F, 1.0F}, 4000);
 
@@ -252,16 +122,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
 APICALL EXPORT void PLUGIN_EXIT() {
     if (g_canvas && g_canvas->anyActive())
         g_canvas->toggleAllMonitors(); // un-float / re-tile windows so unload leaves a clean layout
-    if (g_renderWindowHook)
-        HyprlandAPI::removeFunctionHook(PHANDLE, g_renderWindowHook);
     g_buttonListener.reset();
     g_moveListener.reset();
-    g_axisListener.reset();
     g_openListener.reset();
-    g_renderListener.reset();
-    g_renderStageListener.reset();
     g_canvas.reset();
-    for (const auto& mon : g_pCompositor->m_monitors)
-        if (mon)
-            g_pHyprRenderer->damageMonitor(mon); // repaint at native after unload
 }

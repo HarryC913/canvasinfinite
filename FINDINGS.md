@@ -122,4 +122,29 @@ simple approach:
 
 Verified: ON → all windows float at their exact tiled positions; pan ±N holds in
 both axes; OFF → exact tiled restore. Bound to SUPER+grave (toggle), SUPER+CTRL+J/K
-(pan), and mouse scroll.
+(pan), middle/Ctrl-drag (grab-pan).
+
+## Zoom-out / overview — what worked and what didn't
+
+Goal: zoom OUT to see the whole canvas at proper resolution. Three approaches tried:
+
+1. **renderModif scale in a render hook** — scale the composited output via
+   `m_renderData.renderModif`. Result: ugly. It scales *everything* (wallpaper too) into
+   a black-boxed region; not a real overview.
+2. **Window snapshots** (`makeSnapshot`/`renderSnapshot` scaled in the renderWindow hook)
+   — renders correctly BUT `makeSnapshot` does nested rendering inside the render pass and
+   **crashes Hyprland** (even once-per-session). Dead end. Do not call makeSnapshot from a
+   render hook.
+3. **Monitor scale** ✅ — lower each monitor's `scale` so the logical desktop grows and the
+   compositor downscales it crisply (real resolution, wallpaper correct, off-screen windows
+   become visible). Validated in a nested sandbox + on real hardware.
+
+The catch: monitor scale only **persists** through Hyprland's keyword/config path. From a
+plugin, `mon->applyMonitorRule(rule, true)` applies for ~1 frame then the config monitor-rule
+list re-asserts the configured scale (the config manager isn't exposed to plugins). So scaling
+is done by a **companion script** (`scripts/canvas-overview`) driving `hyprctl keyword monitor`
+— the idiomatic, persistent path. It computes a fit-all scale per monitor from `hyprctl
+clients` bbox, reconstructs each monitor's exact line (mode/refresh/pos/**transform** — portrait
+verified) with the new scale, and saves originals to a state file to toggle back. `hyprctl
+reload` is the backstop. Zoom is a view/monitor operation, so it lives in the script, not the
+render plugin.
