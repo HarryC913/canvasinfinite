@@ -2,10 +2,16 @@
 """
 canvas-overview — toggle a full-display overview for the canvasinfinite plugin.
 
-Zooms each monitor OUT (via Hyprland's monitor scale — crisp compositor downscale,
-not a render hack) so every window on its active workspace fits on screen, then
-toggles back to the native scale. Pairs with the canvasinfinite plugin's canvas
-mode but works on any floating layout.
+Zooms ALL monitors OUT together (via Hyprland's monitor scale — crisp compositor
+downscale, not a render hack) so the whole canvas reads as one continuous space
+spanning every display, then toggles back. Pairs with the canvasinfinite plugin's
+canvas mode but works on any floating layout.
+
+Spanning, not duplicating: a lower scale grows each monitor's logical region, so at
+native positions adjacent monitors would OVERLAP and show the same area twice. We
+use ONE uniform scale for every monitor and reposition them so they stay contiguous
+(no overlap), anchored at the bottom-right-most monitor so every monitor only ever
+grows left/up — which keeps each monitor's own windows inside its expanded region.
 
 Why a script: monitor scale only persists through Hyprland's keyword/config path,
 which a render-plugin can't reach in-process. Driving `hyprctl keyword monitor` from
@@ -38,9 +44,11 @@ def set_monitor(line):
     subprocess.run(["hyprctl", "keyword", "monitor", line], capture_output=True, text=True)
 
 
-def monitor_line(m, scale):
+def monitor_line(m, scale, x=None, y=None):
     # resolution is the MODE size; rotation is applied separately via transform.
-    line = f'{m["name"]},{m["width"]}x{m["height"]}@{m["refreshRate"]:.5f},{m["x"]}x{m["y"]},{scale:g}'
+    x = m["x"] if x is None else int(round(x))
+    y = m["y"] if y is None else int(round(y))
+    line = f'{m["name"]},{m["width"]}x{m["height"]}@{m["refreshRate"]:.5f},{x}x{y},{scale:g}'
     if m.get("transform", 0):
         line += f',transform,{m["transform"]}'
     return line
@@ -70,37 +78,49 @@ def main():
 
     monitors = hjson("monitors")
     clients = hjson("clients")
-    saved = []
+    if not monitors:
+        return
 
+    # Pick ONE uniform scale for every monitor: the most-zoomed-out of each monitor's
+    # target, so the whole canvas fits and the displays tile consistently. Each monitor's
+    # target = fit-to-its-content, but never less zoom than the step-back floor.
+    targets = []
     for m in monitors:
         wsid = m["activeWorkspace"]["id"]
         wins = [c for c in clients
                 if c.get("mapped") and not c.get("hidden", False) and c["workspace"]["id"] == wsid]
-        if not wins:
-            continue
+        step = m["scale"] * STEP_FRACTION
+        if wins:
+            minx = min(c["at"][0] for c in wins)
+            miny = min(c["at"][1] for c in wins)
+            maxx = max(c["at"][0] + c["size"][0] for c in wins)
+            maxy = max(c["at"][1] + c["size"][1] for c in wins)
+            bw = max(1.0, maxx - minx)
+            bh = max(1.0, maxy - miny)
+            phys_w, phys_h = logical_dims(m)
+            fit = min(phys_w / bw, phys_h / bh) * MARGIN  # fit-to-content
+            target = min(fit, step)                       # zoom further if spread, else step back
+        else:
+            target = step
+        targets.append(min(target, m["scale"]))           # never magnify past native
 
-        minx = min(c["at"][0] for c in wins)
-        miny = min(c["at"][1] for c in wins)
-        maxx = max(c["at"][0] + c["size"][0] for c in wins)
-        maxy = max(c["at"][1] + c["size"][1] for c in wins)
-        bw = max(1.0, maxx - minx)
-        bh = max(1.0, maxy - miny)
+    scale = max(MIN_SCALE, min(targets))
 
-        phys_w, phys_h = logical_dims(m)
-        # fit-to-content: scale so the window bbox fits the screen, with a margin.
-        fit = min(phys_w / bw, phys_h / bh) * MARGIN
-        # always step back to a visible degree; zoom out FURTHER if the spread is wider.
-        fit = min(fit, m["scale"] * STEP_FRACTION)
-        fit = max(MIN_SCALE, min(fit, m["scale"]))  # never magnify past native
-        if fit >= m["scale"]:
-            continue  # native already at/below target — nothing to do
+    # Anchor at the bottom-right-most monitor and scale every monitor's position toward it
+    # by 1/scale. Natively-contiguous monitors stay contiguous (the gaps grow with the
+    # regions), and because every monitor only moves left/up, each one's expanded region
+    # still covers its original area -> its windows stay on screen, no overlap/duplication.
+    ax = max(m["x"] for m in monitors)
+    ay = max(m["y"] for m in monitors)
 
-        saved.append(monitor_line(m, m["scale"]))   # remember native line to restore
-        set_monitor(monitor_line(m, round(fit, 4)))
+    saved = [monitor_line(m, m["scale"]) for m in monitors]  # native lines, for restore
+    for m in monitors:
+        nx = ax + (m["x"] - ax) / scale
+        ny = ay + (m["y"] - ay) / scale
+        set_monitor(monitor_line(m, round(scale, 4), nx, ny))
 
-    if saved:
-        with open(STATE, "w") as f:
-            f.write("\n".join(saved) + "\n")
+    with open(STATE, "w") as f:
+        f.write("\n".join(saved) + "\n")
 
 
 if __name__ == "__main__":

@@ -1,14 +1,12 @@
 # canvasinfinite — roadmap / TODO
 
 Done so far: toggle, grab-pan (1:1), multi-monitor, layout persistence across toggles,
-full-display overview (companion script, always steps back to a visible zoom), DPI-block
-(apps keep native resolution during overview — no reflow), public repo.
+full-display overview (companion script, always steps back to a visible zoom, spans all
+monitors as one continuous canvas via seam-anchored repositioning), DPI-block (apps keep
+native resolution during overview — no reflow), overview gated on canvas mode, public repo.
 
 ## Features / ideas
 
-- [ ] **Unified cross-display zoom-out.** Overview scales each monitor independently → feels
-  disjointed. Make it read as one continuous canvas across displays (monitor scale is
-  per-output, so this likely needs a different mechanism — e.g. a single large virtual output).
 - [ ] **Minimap while dragging.** Overlay showing window rects + current viewport during
   grab-pan, fading out when idle.
 - [ ] **Smooth zoom animation.** Animate the DPI-matched ↔ overview transition instead of an
