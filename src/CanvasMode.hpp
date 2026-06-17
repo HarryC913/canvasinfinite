@@ -50,6 +50,10 @@ class CCanvasMode {
     // overview's lowered monitor scale doesn't make apps (Steam/GTK/Qt) reflow their UI.
     float appScale() const { return m_appScale; }
 
+    // Focus + centre the Nth canvas window (1-based), ordered largest-area first across all
+    // canvas workspaces. Drives the SUPER+number window-switcher (via the canvas:jump dispatcher).
+    void jumpToWindow(int n);
+
   private:
     // Per-window snapshot captured on enter(), replayed on leave().
     struct SSavedWin {

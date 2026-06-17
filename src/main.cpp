@@ -10,6 +10,7 @@
 #include <hyprland/src/helpers/Monitor.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/SharedDefs.hpp>
 #include <hyprland/src/plugins/HookSystem.hpp>
@@ -107,6 +108,24 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
         try {
             g_canvas->panAllActive(Vector2D{std::stod(arg.substr(0, SP)), std::stod(arg.substr(SP + 1))});
         } catch (...) { return {.success = false, .error = "canvas:pan: bad args"}; }
+        return {.success = true, .error = ""};
+    });
+
+    // --- SUPER+number: jump to a window in canvas mode, else normal workspace switch ---
+    // Bind SUPER+N to `canvas:jump N`. In canvas mode it focuses+centres the Nth-largest
+    // window; otherwise it falls back to the stock `workspace N` so switching is unchanged.
+    HyprlandAPI::addDispatcherV2(PHANDLE, "canvas:jump", [](std::string arg) -> SDispatchResult {
+        int n = 0;
+        try {
+            n = std::stoi(arg);
+        } catch (...) { return {.success = false, .error = "canvas:jump: expects a number"}; }
+
+        if (g_canvas && g_canvas->anyActive()) {
+            g_canvas->jumpToWindow(n);
+            return {.success = true, .error = ""};
+        }
+        if (g_pKeybindManager && g_pKeybindManager->m_dispatchers.contains("workspace"))
+            return g_pKeybindManager->m_dispatchers["workspace"](arg);
         return {.success = true, .error = ""};
     });
 

@@ -5,8 +5,11 @@
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/helpers/Monitor.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
+#include <hyprland/src/managers/KeybindManager.hpp>
 
 #include <algorithm>
+#include <format>
+#include <vector>
 
 
 // Compare workspaces by ID — the cursor monitor's active workspace and a window's
@@ -178,4 +181,48 @@ void CCanvasMode::leave(const PHLWORKSPACE& ws) {
 
     if (const auto MON = ws->m_monitor.lock())
         g_layoutManager->recalculateMonitor(MON);
+}
+
+void CCanvasMode::jumpToWindow(int n) {
+    if (m_canvasWorkspaces.empty() || n < 1)
+        return;
+
+    // All mapped windows living on a canvas workspace (across every monitor).
+    std::vector<PHLWINDOW> wins;
+    for (const auto& w : g_pCompositor->m_windows)
+        if (w && w->m_isMapped && w->m_workspace && m_canvasWorkspaces.contains(w->m_workspace->m_id))
+            wins.push_back(w);
+    if (n > (int)wins.size())
+        return;
+
+    // Largest-area first, so SUPER+1 is the biggest window, descending.
+    std::sort(wins.begin(), wins.end(), [](const PHLWINDOW& a, const PHLWINDOW& b) {
+        const auto sa = a->m_realSize->goal();
+        const auto sb = b->m_realSize->goal();
+        return sa.x * sa.y > sb.x * sb.y;
+    });
+
+    const auto w   = wins[n - 1];
+    const auto mon = w->m_monitor.lock();
+    if (!mon)
+        return;
+
+    // Bring it into view: pan its workspace so the window's centre lands at the monitor
+    // centre (same snap-to-goal trick as the grab-pan, so it's immediate, not animated-laggy).
+    const Vector2D delta = mon->middle() - (w->m_realPosition->goal() + w->m_realSize->goal() / 2.0);
+    for (const auto& o : g_pCompositor->m_windows) {
+        if (!o || !o->m_isMapped || !o->m_workspace || o->m_workspace->m_id != w->m_workspace->m_id)
+            continue;
+        if (const auto t = o->layoutTarget()) {
+            g_layoutManager->moveTarget(delta, t);
+            if (o->m_realPosition)
+                o->m_realPosition->value() = o->m_realPosition->goal();
+        }
+    }
+
+    // Move focus (and the cursor) to it. Reuse the built-in focuswindow dispatcher so focus
+    // state, history and the active border all update the same way a normal focus would.
+    g_pCompositor->warpCursorTo(mon->middle());
+    if (g_pKeybindManager && g_pKeybindManager->m_dispatchers.contains("focuswindow"))
+        g_pKeybindManager->m_dispatchers["focuswindow"](std::format("address:0x{:x}", (uintptr_t)w.get()));
 }

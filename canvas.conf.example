@@ -23,3 +23,29 @@ bind = SUPER CTRL, J, canvas:pan, 0 200
 # back to native. This is the companion script scripts/canvas-overview (point the path
 # at wherever you cloned the repo). Pick a key that doesn't clash with your setup.
 bind = SUPER CTRL, O, exec, /home/YOURUSER/canvasinfinite/scripts/canvas-overview
+
+# In canvas mode, SUPER+1..0 focus the Nth-LARGEST window (and centre it in view). Outside
+# canvas mode they fall back to normal `workspace N` switching, so day-to-day use is
+# unchanged. (code:10..19 are the digit row 1,2,...,9,0 — used so it works regardless of
+# keyboard layout and overrides the stock workspace binds. Drop the `unbind` lines if your
+# config doesn't already bind these.)
+unbind = SUPER, code:10
+unbind = SUPER, code:11
+unbind = SUPER, code:12
+unbind = SUPER, code:13
+unbind = SUPER, code:14
+unbind = SUPER, code:15
+unbind = SUPER, code:16
+unbind = SUPER, code:17
+unbind = SUPER, code:18
+unbind = SUPER, code:19
+bind = SUPER, code:10, canvas:jump, 1
+bind = SUPER, code:11, canvas:jump, 2
+bind = SUPER, code:12, canvas:jump, 3
+bind = SUPER, code:13, canvas:jump, 4
+bind = SUPER, code:14, canvas:jump, 5
+bind = SUPER, code:15, canvas:jump, 6
+bind = SUPER, code:16, canvas:jump, 7
+bind = SUPER, code:17, canvas:jump, 8
+bind = SUPER, code:18, canvas:jump, 9
+bind = SUPER, code:19, canvas:jump, 10
