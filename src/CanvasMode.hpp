@@ -4,6 +4,7 @@
 #include <hyprland/src/desktop/DesktopTypes.hpp>
 #include <hyprland/src/helpers/math/Math.hpp>
 #include <hyprland/src/helpers/memory/Memory.hpp>
+#include <hyprland/src/helpers/Color.hpp>
 
 #include <unordered_map>
 #include <unordered_set>
@@ -53,6 +54,11 @@ class CCanvasMode {
     // Focus + centre the Nth canvas window (1-based), ordered largest-area first across all
     // canvas workspaces. Drives the SUPER+number window-switcher (via the canvas:jump dispatcher).
     void jumpToWindow(int n);
+
+    // Draw the grab-pan minimap on the given monitor (called from a render-stage listener):
+    // a corner panel with every canvas window as a rect labelled by its SUPER+number, and
+    // this monitor's viewport. `accent` is the system theme colour (active border).
+    void renderMinimap(const PHLMONITOR& mon, float alpha, const CHyprColor& accent);
 
   private:
     // Per-window snapshot captured on enter(), replayed on leave().

@@ -15,15 +15,48 @@
 #include <hyprland/src/SharedDefs.hpp>
 #include <hyprland/src/plugins/HookSystem.hpp>
 #include <hyprland/src/protocols/FractionalScale.hpp>
+#include <hyprland/src/render/Renderer.hpp>
 
 #include <fstream>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 
 // Kept alive for the life of the plugin; resetting them unregisters the hooks.
 static CHyprSignalListener g_buttonListener;
 static CHyprSignalListener g_moveListener;
 static CHyprSignalListener g_openListener;
+static CHyprSignalListener g_renderListener;
+
+// Minimap fade level (0..1), eased toward 1 while grab-panning and back to 0 when idle.
+static float g_minimapAlpha = 0.0F;
+
+// System theme accent = first colour of the active-border gradient. Read via hyprctl
+// (the config-pointer route returns garbage for complex gradient values) and parse the
+// AARRGGBB hex ourselves. Cached for a few seconds so it tracks theme switches cheaply.
+static CHyprColor themeAccent() {
+    static CHyprColor cached(0.20, 0.60, 0.95, 1.0);
+    static time_t     lastRead = 0;
+    const time_t      now      = time(nullptr);
+    if (now - lastRead < 3)
+        return cached;
+    lastRead = now;
+
+    const std::string out = HyprlandAPI::invokeHyprctlCommand("getoption", "general:col.active_border", "json");
+    if (const auto cp = out.find("\"custom\""); cp != std::string::npos) {
+        const auto q1 = out.find('"', out.find(':', cp));
+        const auto q2 = q1 == std::string::npos ? std::string::npos : out.find('"', q1 + 1);
+        if (q2 != std::string::npos) {
+            const std::string tok = out.substr(q1 + 1, q2 - q1 - 1); // "eea9b665 eed8a657 45deg"
+            try {
+                const uint32_t v = (uint32_t)std::stoul(tok.substr(0, 8), nullptr, 16); // AARRGGBB
+                cached           = CHyprColor(((v >> 16) & 0xFF) / 255.0, ((v >> 8) & 0xFF) / 255.0,
+                                               (v & 0xFF) / 255.0, ((v >> 24) & 0xFF) / 255.0);
+            } catch (...) {}
+        }
+    }
+    return cached;
+}
 
 // --- DPI-block ------------------------------------------------------------------
 // The overview lowers each monitor's scale so the desktop zooms out. Fractional-scale-
@@ -47,7 +80,7 @@ static void hkSendScale(CFractionalScaleProtocol* thisptr, SP<CWLSurfaceResource
 // otherwise, so SUPER+CTRL+grave is inert outside canvas mode.
 static std::string markerPath() {
     const char* x = getenv("XDG_RUNTIME_DIR");
-    return std::string(x ? x : "/tmp") + "/canvasinfinite-active";
+    return std::string(x ? x : "/tmp") + "/hyprplane-active";
 }
 static void syncCanvasMarker() {
     const auto p = markerPath();
@@ -91,8 +124,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(PHANDLE, "canvas:toggle", [](std::string) -> SDispatchResult {
         g_canvas->toggleAllMonitors();
         syncCanvasMarker(); // let the overview script know canvas is on/off
-        HyprlandAPI::addNotification(PHANDLE, g_canvas->anyActive() ? "[canvas] ON" : "[canvas] OFF",
-                                     CHyprColor{0.2F, 0.8F, 1.0F, 1.0F}, 1500);
+        HyprlandAPI::addNotification(PHANDLE, g_canvas->anyActive() ? "[hyprplane] ON" : "[hyprplane] OFF",
+                                      CHyprColor{0.2F, 0.8F, 1.0F, 1.0F}, 1500);
         return {.success = true, .error = ""};
     });
 
@@ -104,10 +137,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
 
         const auto SP = arg.find(' ');
         if (SP == std::string::npos)
-            return {.success = false, .error = "canvas:pan expects: <dx> <dy>"};
+            return {.success = false, .error = "hyprplane: canvas:pan expects: <dx> <dy>"};
         try {
             g_canvas->panAllActive(Vector2D{std::stod(arg.substr(0, SP)), std::stod(arg.substr(SP + 1))});
-        } catch (...) { return {.success = false, .error = "canvas:pan: bad args"}; }
+        } catch (...) { return {.success = false, .error = "hyprplane: canvas:pan: bad args"}; }
         return {.success = true, .error = ""};
     });
 
@@ -118,7 +151,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
         int n = 0;
         try {
             n = std::stoi(arg);
-        } catch (...) { return {.success = false, .error = "canvas:jump: expects a number"}; }
+        } catch (...) { return {.success = false, .error = "hyprplane: canvas:jump: expects a number"}; }
 
         if (g_canvas && g_canvas->anyActive()) {
             g_canvas->jumpToWindow(n);
@@ -165,6 +198,27 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
                 g_grabbing = false;            // canvas turned off mid-drag
         });
 
+    // --- minimap: drawn over everything during a grab-pan, fading out when idle ----------
+    g_renderListener = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
+        if (stage != RENDER_POST_WINDOWS) // add our pass element while the pass is being built
+            return;
+        if (!g_canvas || !g_canvas->anyActive()) {
+            g_minimapAlpha = 0.0F;
+            return;
+        }
+        // ease toward visible while grab-panning, toward hidden when idle
+        g_minimapAlpha += ((g_grabbing ? 1.0F : 0.0F) - g_minimapAlpha) * 0.18F;
+        if (g_minimapAlpha <= 0.004F) {
+            g_minimapAlpha = 0.0F;
+            return;
+        }
+        const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        if (!mon)
+            return;
+        g_canvas->renderMinimap(mon, g_minimapAlpha, themeAccent());
+        g_pHyprRenderer->damageMonitor(mon); // keep frames coming so the fade animates / updates
+    });
+
     // A window opened while canvas is on → float it so it joins the canvas.
     g_openListener = Event::bus()->m_events.window.open.listen([](const PHLWINDOW& w) {
         if (g_canvas)
@@ -181,10 +235,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
     if (g_sendScaleHook)
         g_sendScaleHook->hook();
 
-    HyprlandAPI::addNotification(PHANDLE, "[canvasinfinite] loaded — toggle: SUPER+grave, middle/Ctrl-drag to pan",
-                                 CHyprColor{0.2F, 1.0F, 0.4F, 1.0F}, 4000);
+    HyprlandAPI::addNotification(PHANDLE, "[hyprplane] loaded — toggle: SUPER+grave, middle/Ctrl-drag to pan",
+                                  CHyprColor{0.2F, 1.0F, 0.4F, 1.0F}, 4000);
 
-    return {"canvasinfinite", "Infinite scroll canvas (Phase 0 proof)", "hcopeland", "0.0.1"};
+    return {"hyprplane", "Infinite pannable canvas for Hyprland", "hcopeland", "0.1.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
@@ -196,5 +250,6 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_buttonListener.reset();
     g_moveListener.reset();
     g_openListener.reset();
+    g_renderListener.reset();
     g_canvas.reset();
 }

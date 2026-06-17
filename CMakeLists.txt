@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(canvasinfinite CXX)
+project(hyprplane CXX)
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,19 +9,21 @@ find_package(PkgConfig REQUIRED)
 # hyprland.pc pulls in aquamarine/hyprutils/hyprlang/pixman/wayland/etc transitively.
 pkg_check_modules(DEPS REQUIRED IMPORTED_TARGET
     hyprland
+    hyprgraphics
     pixman-1
     libdrm
     pangocairo
+    cairo
 )
 
-add_library(canvasinfinite SHARED
+add_library(hyprplane SHARED
     src/main.cpp
     src/CanvasMode.cpp
 )
 
-target_compile_options(canvasinfinite PRIVATE -fPIC -Wall -Wextra -Wno-unused-parameter)
-target_link_libraries(canvasinfinite PRIVATE PkgConfig::DEPS)
-set_target_properties(canvasinfinite PROPERTIES PREFIX "")  # -> canvasinfinite.so
+target_compile_options(hyprplane PRIVATE -fPIC -Wall -Wextra -Wno-unused-parameter)
+target_link_libraries(hyprplane PRIVATE PkgConfig::DEPS)
+set_target_properties(hyprplane PROPERTIES PREFIX "")  # -> hyprplane.so
 
-install(TARGETS canvasinfinite
+install(TARGETS hyprplane
     LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/hyprland/plugins)

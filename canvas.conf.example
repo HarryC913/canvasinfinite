@@ -1,4 +1,4 @@
-# canvasinfinite — example config (additive / opt-in).
+# hyprplane — example config (additive / opt-in).
 #
 # 1. Build the plugin (see README), then point this at the built .so.
 # 2. Source this file at the END of your ~/.config/hypr/hyprland.conf:
@@ -8,7 +8,7 @@
 # To disable everything: remove the `source =` line above and relog.
 
 # Load the plugin at startup. Adjust the path to where you built it.
-plugin = /home/YOURUSER/canvasinfinite/build/canvasinfinite.so
+plugin = /home/YOURUSER/hyprplane/build/hyprplane.so
 
 # Toggle canvas mode on the focused workspace(s) — affects all monitors at once.
 bind = SUPER, grave, canvas:toggle
@@ -22,7 +22,7 @@ bind = SUPER CTRL, J, canvas:pan, 0 200
 # Full-display overview: zoom OUT (crisp monitor downscale) to fit all windows, toggle
 # back to native. This is the companion script scripts/canvas-overview (point the path
 # at wherever you cloned the repo). Pick a key that doesn't clash with your setup.
-bind = SUPER CTRL, O, exec, /home/YOURUSER/canvasinfinite/scripts/canvas-overview
+bind = SUPER CTRL, O, exec, /home/YOURUSER/hyprplane/scripts/canvas-overview
 
 # In canvas mode, SUPER+1..0 focus the Nth-LARGEST window (and centre it in view). Outside
 # canvas mode they fall back to normal `workspace N` switching, so day-to-day use is

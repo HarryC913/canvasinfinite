@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-canvas-overview — toggle a full-display overview for the canvasinfinite plugin.
+canvas-overview — toggle a full-display overview for the hyprplane plugin.
 
 Zooms ALL monitors OUT together (via Hyprland's monitor scale — crisp compositor
 downscale, not a render hack) so the whole canvas reads as one continuous space
-spanning every display, then toggles back. Pairs with the canvasinfinite plugin's
+spanning every display, then toggles back. Pairs with the hyprplane plugin's
 canvas mode but works on any floating layout.
 
 Spanning, not duplicating: a lower scale grows each monitor's logical region, so at
@@ -27,8 +27,8 @@ import subprocess
 import sys
 import time
 
-STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "canvasinfinite-overview.state")
-ACTIVE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "canvasinfinite-active")
+STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "hyprplane-overview.state")
+ACTIVE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "hyprplane-active")
 MARGIN = 0.92          # leave a small border around the fitted windows
 MIN_SCALE = 0.1        # never shrink past this
 STEP_FRACTION = 0.5    # always zoom out to AT MOST this fraction of native scale, so a

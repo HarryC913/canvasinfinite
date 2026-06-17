@@ -1,4 +1,4 @@
-# Phase 0 Findings — canvasinfinite (tested live on Hyprland 0.55.4)
+# Phase 0 Findings — hyprplane (tested live on Hyprland 0.55.4)
 
 Tested by actually building, loading, and exercising the plugin in the running
 compositor (commit `a0136d8c`). Summary: **the toggle/gating architecture is
@@ -58,7 +58,7 @@ to hold. `enter()` must therefore save each window's floating state + geometry a
 1. **`dlopen` caches by path.** `hyprctl plugin unload <p>` then `load <p>` returns
    `ok` but keeps running the *old* image (handle unchanged, new dispatchers
    missing) — `dlclose` doesn't unmap (lingering refcount). **Fix: load each
-   rebuild from a unique filename** (`cp build/canvasinfinite.so /tmp/ci_$(date +%s).so`).
+   rebuild from a unique filename** (`cp build/hyprplane.so /tmp/ci_$(date +%s).so`).
    A new handle (e.g. `...db80` vs `...f7a0`) confirms a real reload.
 2. **`hyprctl dispatch` eats leading-`-` args.** `canvas:pan 0 -500` → "Invalid
    dispatcher" (parses `-500` as a flag). Use positive deltas from the CLI;
@@ -73,7 +73,7 @@ to hold. `enter()` must therefore save each window's floating state + geometry a
 ```bash
 cmake --build build -j
 hyprctl plugin unload "$(cat /tmp/ci_live 2>/dev/null)" 2>/dev/null
-CP=/tmp/ci_$(date +%s).so; cp build/canvasinfinite.so "$CP"; echo "$CP" >/tmp/ci_live
+CP=/tmp/ci_$(date +%s).so; cp build/hyprplane.so "$CP"; echo "$CP" >/tmp/ci_live
 hyprctl plugin load "$CP"
 # headless visual check: grim before/after a canvas:pan, compare/view PNGs
 ```

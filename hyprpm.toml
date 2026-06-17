@@ -1,0 +1,6 @@
+[plugin]
+name = "hyprplane"
+authors = ["hcopeland"]
+description = "Infinite pannable 2D canvas for Hyprland. Toggle it on, drag your windows around an infinite plane across every monitor, toggle off to snap back to tiling."
+
+output = "build/hyprplane.so"
