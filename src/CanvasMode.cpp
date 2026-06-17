@@ -37,17 +37,34 @@ static std::string lower(std::string s) {
     return s;
 }
 
-// Resolve a window class to a freedesktop icon NAME via .desktop files (StartupWMClass or
-// filename match, reading Icon=). Falls back to the class itself.
+// A "core" key for a window class: strips the chromium PWA wrapper (chrome-<core>...-Default)
+// and takes the token before the first . _ or space — e.g. "chrome-discord.com__x-Default" -> "discord".
+static std::string classKey(const std::string& cls) {
+    std::string k = lower(cls);
+    for (const char* pre : {"chrome-", "chromium-", "msedge-", "brave-"})
+        if (k.rfind(pre, 0) == 0) {
+            k = k.substr(std::string(pre).size());
+            break;
+        }
+    if (const auto p = k.rfind("-default"); p != std::string::npos && p == k.size() - 8)
+        k = k.substr(0, p);
+    return k.substr(0, k.find_first_of("._ "));
+}
+
+// Resolve a window class to a freedesktop icon NAME via .desktop files, reading Icon=. Tries,
+// strongest first: StartupWMClass match, filename==class, filename==core key, then a fuzzy
+// substring match on the core key (handles PWAs like Discord). Falls back to the class itself.
 static std::string desktopIconName(const std::string& cls) {
-    const std::string  lc = lower(cls);
+    const std::string        lc  = lower(cls);
+    const std::string        key = classKey(cls);
     std::vector<std::string> dirs;
     if (const char* h = getenv("HOME"))
         dirs.push_back(std::string(h) + "/.local/share/applications");
     dirs.push_back("/usr/share/applications");
     dirs.push_back("/usr/local/share/applications");
 
-    std::string weak; // a filename-match icon, used only if no StartupWMClass match found
+    std::string best;
+    int         bestScore = 0;
     for (const auto& d : dirs) {
         std::error_code ec;
         if (!fs::is_directory(d, ec))
@@ -65,13 +82,27 @@ static std::string desktopIconName(const std::string& cls) {
             }
             if (icon.empty())
                 continue;
+            const std::string stem = lower(e.path().stem().string());
+
+            int score = 0;
             if (!wmclass.empty() && lower(wmclass) == lc)
-                return icon; // strongest match
-            if (weak.empty() && lower(e.path().stem().string()) == lc)
-                weak = icon;
+                score = 100;
+            else if (stem == lc)
+                score = 80;
+            else if (!key.empty() && key.size() >= 3 && stem == key)
+                score = 60;
+            else if (!key.empty() && key.size() >= 3 && (stem.find(key) != std::string::npos || key.find(stem) != std::string::npos))
+                score = 40;
+
+            if (score > bestScore) {
+                bestScore = score;
+                best      = icon;
+                if (score == 100)
+                    return best;
+            }
         }
     }
-    return weak.empty() ? cls : weak;
+    return best.empty() ? cls : best;
 }
 
 // Resolve an icon name to a file via the standard hicolor / pixmaps locations (direct path
@@ -449,11 +480,18 @@ void CCanvasMode::renderMinimap(const PHLMONITOR& mon, float alpha, const CHyprC
         const double   rw = std::max(2.0, wins[i].size.x * sc), rh = std::max(2.0, wins[i].size.y * sc);
         addRect(CBox(tp.x, tp.y, rw, rh), winCol, 2);
 
-        // App icon, centred and square, filling most of the rect.
+        // App icon, centred, aspect-preserved, modest size (capped so big windows don't get
+        // a huge icon).
         if (const auto tex = iconTexture(wins[i].cls)) {
-            const double s = std::min(rw, rh) * 0.82;
-            if (s >= 6.0)
-                addTex(tex, CBox(tp.x + (rw - s) / 2.0, tp.y + (rh - s) / 2.0, s, s), 0.95F * alpha);
+            const double box = std::clamp(std::min(rw, rh) * 0.55, 8.0, 32.0);
+            if (rw >= box && rh >= box) {
+                double iw = tex->m_size.x, ih = tex->m_size.y;
+                if (iw < 1.0 || ih < 1.0)
+                    iw = ih = 1.0;
+                const double k = box / std::max(iw, ih); // fit the longer side, keep aspect
+                const double dw = iw * k, dh = ih * k;
+                addTex(tex, CBox(tp.x + (rw - dw) / 2.0, tp.y + (rh - dh) / 2.0, dw, dh), 0.95F * alpha);
+            }
         }
 
         // SUPER+number badge: small, top-left, on a dark chip so it reads over any icon.
