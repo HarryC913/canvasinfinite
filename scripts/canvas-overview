@@ -25,6 +25,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "canvasinfinite-overview.state")
 ACTIVE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "canvasinfinite-active")
@@ -41,7 +42,18 @@ def hjson(*args):
 
 
 def set_monitor(line):
-    subprocess.run(["hyprctl", "keyword", "monitor", line], capture_output=True, text=True)
+    # don't decode output: hyprctl can occasionally return non-utf8 during heavy monitor
+    # reconfig, and a decode crash here would leave monitors displaced with no state file.
+    subprocess.run(["hyprctl", "keyword", "monitor", line],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def reanchor():
+    # A monitor-position change does NOT move its layer surfaces (the wallpaper stays put,
+    # so a moved display goes black). forcerendererreload re-anchors them — and crucially it
+    # KEEPS the keyword-set positions/scale (it does not reset monitors back to config).
+    subprocess.run(["hyprctl", "dispatch", "forcerendererreload"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def monitor_line(m, scale, x=None, y=None):
@@ -67,13 +79,13 @@ def main():
     if not os.path.exists(STATE) and not os.path.exists(ACTIVE):
         return
 
-    # already in overview -> restore the saved monitor lines and exit
+    # already in overview -> restore the saved native monitor lines and exit
     if os.path.exists(STATE):
-        for line in open(STATE):
-            line = line.strip()
-            if line:
-                set_monitor(line)
+        lines = [l.strip() for l in open(STATE) if l.strip()]
         os.remove(STATE)
+        for line in lines:
+            set_monitor(line)
+        reanchor()
         return
 
     monitors = hjson("monitors")
@@ -113,14 +125,31 @@ def main():
     ax = max(m["x"] for m in monitors)
     ay = max(m["y"] for m in monitors)
 
-    saved = [monitor_line(m, m["scale"]) for m in monitors]  # native lines, for restore
-    for m in monitors:
-        nx = ax + (m["x"] - ax) / scale
-        ny = ay + (m["y"] - ay) / scale
-        set_monitor(monitor_line(m, round(scale, 4), nx, ny))
+    def place(m, s):
+        # anchored at the bottom-right-most monitor so each monitor only grows left/up,
+        # keeping its own windows inside its expanded region; contiguous, no overlap.
+        return monitor_line(m, round(s, 4), ax + (m["x"] - ax) / s, ay + (m["y"] - ay) / s)
 
+    # Save the native monitor lines FIRST, so a press always restores cleanly even if
+    # applying the zoom below fails partway — otherwise re-runs would read the displaced
+    # positions and compound the offset (monitors fly off-screen). This is the safety net.
     with open(STATE, "w") as f:
-        f.write("\n".join(saved) + "\n")
+        f.write("\n".join(monitor_line(m, m["scale"]) for m in monitors) + "\n")
+
+    for m in monitors:
+        set_monitor(place(m, scale))
+
+    # Hyprland snaps fractional scales to integer-pixel values (e.g. 0.6 -> 0.62) or rejects
+    # far ones (-> native), so the positions above may not match the scale actually applied.
+    # Re-read (after a settle delay — the keyword apply is async; reading too soon gives the
+    # stale scale and would mis-correct) and, if it snapped, reposition using the real
+    # per-monitor scale (a rejected monitor lands back at its native spot, not off screen).
+    time.sleep(0.2)
+    actual = {m["name"]: m["scale"] for m in hjson("monitors")}
+    if any(abs(actual.get(m["name"], scale) - scale) > 1e-3 for m in monitors):
+        for m in monitors:
+            set_monitor(place(m, actual.get(m["name"], m["scale"])))
+    reanchor()
 
 
 if __name__ == "__main__":
