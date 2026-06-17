@@ -21,6 +21,7 @@ import subprocess
 import sys
 
 STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "canvasinfinite-overview.state")
+ACTIVE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "canvasinfinite-active")
 MARGIN = 0.92          # leave a small border around the fitted windows
 MIN_SCALE = 0.1        # never shrink past this
 STEP_FRACTION = 0.5    # always zoom out to AT MOST this fraction of native scale, so a
@@ -53,6 +54,11 @@ def logical_dims(m):
 
 
 def main():
+    # only ENTER overview when canvas mode is on (plugin writes the ACTIVE marker). Leaving
+    # overview is always allowed, so you can never get stuck zoomed if canvas turned off.
+    if not os.path.exists(STATE) and not os.path.exists(ACTIVE):
+        return
+
     # already in overview -> restore the saved monitor lines and exit
     if os.path.exists(STATE):
         for line in open(STATE):

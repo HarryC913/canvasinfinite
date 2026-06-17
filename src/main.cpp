@@ -15,6 +15,10 @@
 #include <hyprland/src/plugins/HookSystem.hpp>
 #include <hyprland/src/protocols/FractionalScale.hpp>
 
+#include <fstream>
+#include <cstdio>
+#include <cstdlib>
+
 // Kept alive for the life of the plugin; resetting them unregisters the hooks.
 static CHyprSignalListener g_buttonListener;
 static CHyprSignalListener g_moveListener;
@@ -35,6 +39,21 @@ static void hkSendScale(CFractionalScaleProtocol* thisptr, SP<CWLSurfaceResource
     if (g_canvas && g_canvas->anyActive() && s < g_canvas->appScale())
         s = g_canvas->appScale();
     (*(PsendScale)g_sendScaleHook->m_original)(thisptr, surf, s);
+}
+
+// Marker file the companion overview script checks: it only ENTERS overview when canvas is
+// on (this file exists). We create it when any canvas workspace is active and remove it
+// otherwise, so SUPER+CTRL+grave is inert outside canvas mode.
+static std::string markerPath() {
+    const char* x = getenv("XDG_RUNTIME_DIR");
+    return std::string(x ? x : "/tmp") + "/canvasinfinite-active";
+}
+static void syncCanvasMarker() {
+    const auto p = markerPath();
+    if (g_canvas && g_canvas->anyActive()) {
+        std::ofstream f(p, std::ios::trunc); // opening creates the marker file
+    } else
+        std::remove(p.c_str());
 }
 
 // Grab-to-pan state (middle-mouse or Ctrl+left drag).
@@ -70,6 +89,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
     // --- the master switch -------------------------------------------------
     HyprlandAPI::addDispatcherV2(PHANDLE, "canvas:toggle", [](std::string) -> SDispatchResult {
         g_canvas->toggleAllMonitors();
+        syncCanvasMarker(); // let the overview script know canvas is on/off
         HyprlandAPI::addNotification(PHANDLE, g_canvas->anyActive() ? "[canvas] ON" : "[canvas] OFF",
                                      CHyprColor{0.2F, 0.8F, 1.0F, 1.0F}, 1500);
         return {.success = true, .error = ""};
@@ -151,6 +171,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
 APICALL EXPORT void PLUGIN_EXIT() {
     if (g_canvas && g_canvas->anyActive())
         g_canvas->toggleAllMonitors(); // un-float / re-tile windows so unload leaves a clean layout
+    std::remove(markerPath().c_str()); // canvas is off now
     if (g_sendScaleHook)
         g_sendScaleHook->unhook();
     g_buttonListener.reset();
