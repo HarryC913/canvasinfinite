@@ -228,17 +228,16 @@ void CCanvasMode::jumpToWindow(int n) {
     if (!mon)
         return;
 
-    // Bring it into view: pan its workspace so the window's centre lands at the monitor
-    // centre (same snap-to-goal trick as the grab-pan, so it's immediate, not animated-laggy).
+    // Bring it into view by panning its whole workspace so the window's centre lands at the
+    // monitor centre. moveTarget sets the (animated) goal and we DON'T snap value→goal here, so
+    // every window eases to its new spot together — the viewport visibly slides over, as if the
+    // canvas were dragging itself to the target. (Grab-pan snaps for 1:1; the jump wants the ease.)
     const Vector2D delta = mon->middle() - (w->m_realPosition->goal() + w->m_realSize->goal() / 2.0);
     for (const auto& o : g_pCompositor->m_windows) {
         if (!o || !o->m_isMapped || !o->m_workspace || o->m_workspace->m_id != w->m_workspace->m_id)
             continue;
-        if (const auto t = o->layoutTarget()) {
+        if (const auto t = o->layoutTarget())
             g_layoutManager->moveTarget(delta, t);
-            if (o->m_realPosition)
-                o->m_realPosition->value() = o->m_realPosition->goal();
-        }
     }
 
     // Move focus (and the cursor) to it. Reuse the built-in focuswindow dispatcher so focus
